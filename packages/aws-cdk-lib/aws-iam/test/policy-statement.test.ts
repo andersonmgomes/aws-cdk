@@ -1,3 +1,8 @@
+import { Construct } from 'constructs';
+import { Template } from '../../assertions';
+import * as events from '../../aws-events';
+import * as iam from '../../aws-iam';
+import * as cdk from '../../core';
 import { Stack } from '../../core';
 import { AnyPrincipal, Group, PolicyDocument, PolicyStatement, Effect } from '../lib';
 
@@ -265,5 +270,49 @@ describe('IAM policy statement', () => {
     for (const mod of modifications) {
       expect(mod).toThrow(/can no longer be modified/);
     }
+  });
+
+  class CircularReferenceStack extends Stack {
+    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+      super(scope, id, props);
+
+      const defaultEventBus = events.EventBus.fromEventBusName(this, 'Default', 'default');
+      const policyFromJson = iam.PolicyStatement.fromJson({
+        Principal: {
+          AWS: '123456789010',
+        },
+        Action: [
+          'events:PutEvents',
+        ],
+        Resource: [
+          defaultEventBus.eventBusArn,
+        ],
+      });
+      new events.CfnEventBusPolicy(this, 'MyPolicy', {
+        statementId: 'MyStatement',
+        statement: policyFromJson,
+      });
+    }
+  };
+
+  function assertPolicyCreated(stack: Stack) {
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: [
+          {
+            Action: 'some:action',
+            Effect: 'Allow',
+            Resource: 'arn:aws:resource',
+          },
+        ],
+        Version: '2012-10-17',
+      },
+    });
+  };
+
+  test('PolicyStatement not resolved', () => {
+    const app = new cdk.App();
+    const stack = new CircularReferenceStack(app, 'CircularStack');
+    expect(() => assertPolicyCreated(stack)).not.toThrow();
   });
 });
